@@ -1,6 +1,6 @@
 import os
+import json
 import discord
-import json  # <-- Import this to handle JSON errors
 from discord.ext import commands, tasks
 import requests
 from dotenv import load_dotenv
@@ -12,10 +12,8 @@ OPS_USERNAME = os.getenv("OPS_USERNAME")
 OPS_PASSWORD = os.getenv("OPS_PASSWORD")
 OPS_TOKEN = os.getenv("OPS_TOKEN")
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.presences = True  # This enables the Presence Intent
-intents.members = True    # This enables the Server Members Intent
+intents = discord.Intents.all()
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def get_new_ops_token():
@@ -38,12 +36,15 @@ def get_ops_endpoint(data):
         return "https://api.openpeoplesearch.com/api/v1/Consumer/PhoneSearch"
     elif 'emailAddress' in data:
         return "https://api.openpeoplesearch.com/api/v1/Consumer/EmailAddressSearch"
-    elif 'firstName' in data and 'lastName' in data and 'address' not in data and 'dob' not in data:
-        return "https://api.openpeoplesearch.com/api/v1/Consumer/NameSearch"
-    elif 'firstName' in data and 'lastName' in data and 'address' in data:
-        return "https://api.openpeoplesearch.com/api/v1/Consumer/NameAddressSearch"
-    elif 'firstName' in data and 'lastName' in data and 'dob' in data:
-        return "https://api.openpeoplesearch.com/api/v1/Consumer/NameDOBSearch"
+    elif 'firstName' in data and 'lastName' in data:
+        if 'address' in data and 'dob' in data:
+            return "https://api.openpeoplesearch.com/api/v1/Consumer/NameDOBAddressSearch"
+        elif 'address' in data:
+            return "https://api.openpeoplesearch.com/api/v1/Consumer/NameAddressSearch"
+        elif 'dob' in data:
+            return "https://api.openpeoplesearch.com/api/v1/Consumer/NameDOBSearch"
+        else:
+            return "https://api.openpeoplesearch.com/api/v1/Consumer/NameSearch"
     elif 'businessName' in data:
         return "https://api.openpeoplesearch.com/api/v1/Consumer/BusinessSearch"
     elif 'address' in data:
@@ -52,6 +53,11 @@ def get_ops_endpoint(data):
         return "https://api.openpeoplesearch.com/api/v1/Consumer/PoBoxSearch"
     else:
         return None
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name}')
+    renew_ops_token.start()  # Start the token renewal loop
 
 @tasks.loop(hours=6.5)
 async def renew_ops_token():
@@ -64,13 +70,13 @@ async def renew_ops_token():
     else:
         print("Failed to renew the OPS token. Trying again in 6.5 hours.")
 
-@bot.command(name='search')
-async def search(ctx, first_name=None, last_name=None, middle_name=None, dob=None, address=None, phoneNumber=None, emailAddress=None, businessName=None, poBox=None):
+@bot.command(name='search', help='Use this command with the necessary parameters to perform a search.')
+async def search(ctx, firstname=None, lastname=None, middlename=None, dob=None, address=None, phoneNumber=None, emailAddress=None, businessName=None, poBox=None):
     """Search for data in OPS using the provided parameters."""
     data = {
-        "firstName": first_name,
-        "lastName": last_name,
-        "middleName": middle_name,
+        "firstName": firstname,
+        "lastName": lastname,
+        "middleName": middlename,
         "dob": dob,
         "address": address,
         "phoneNumber": phoneNumber,
@@ -92,13 +98,16 @@ async def search(ctx, first_name=None, last_name=None, middle_name=None, dob=Non
         'Content-Type': 'application/json',
     }
 
-    response = requests.post(endpoint_url, headers=headers, json=data, timeout=120)
+    try:
+        response = requests.post(endpoint_url, headers=headers, json=data, timeout=120)
+        response.raise_for_status()  # This will raise an HTTPError for bad responses
+    except requests.exceptions.RequestException as e:
+        await ctx.send(f"An error occurred while making the request: {e}")
+        return
 
     # Check if the response content type is JSON
     content_type = response.headers.get("Content-Type", "")
     if "application/json" not in content_type:
-    # handle the error
-
         await ctx.send("Received an unexpected response from the server. Please try again later.")
         return
 
@@ -114,4 +123,3 @@ async def search(ctx, first_name=None, last_name=None, middle_name=None, dob=Non
         await ctx.send("Error occurred while searching. Please try again.")
 
 bot.run(DISCORD_TOKEN)
-
